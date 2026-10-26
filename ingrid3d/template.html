@@ -1,0 +1,820 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Ingrid">
+<meta name="theme-color" content="#0b0d10">
+<title>Ingrid</title>
+<style>
+:root{
+  --bg:#0b0d10; --panel:rgba(14,15,17,.86); --ink:#E9E3D6; --faded:#9C9488; --accent:#D9A35B; --blood:#B0473A; --line:rgba(233,227,214,.14);
+  --panelW:min(44vw, 520px);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);overscroll-behavior:none;
+  font-family:Georgia,"Iowan Old Style","Palatino Linotype",serif}
+canvas{position:fixed;inset:0;display:block;width:100vw;height:100vh;touch-action:none}
+#fade{position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity .45s ease}
+#fade.on{opacity:1}
+
+/* text panel: right side in landscape, bottom sheet in portrait */
+#panel{position:fixed;top:0;right:0;bottom:0;width:var(--panelW);background:var(--panel);
+  border-left:1px solid var(--line);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+  display:flex;flex-direction:column;
+  padding:calc(22px + env(safe-area-inset-top)) calc(22px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) 24px}
+@media (orientation:portrait){
+  #panel{top:auto;left:0;width:auto;height:46vh;border-left:none;border-top:1px solid var(--line);border-radius:18px 18px 0 0;
+    padding:18px calc(20px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left))}
+}
+#scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-right:4px}
+#where{font:600 11px/1 -apple-system,system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--faded);margin-bottom:14px}
+#text{font-size:17px;line-height:1.6;white-space:pre-line}
+#text b{color:var(--blood);font-weight:700}
+#text i{color:#CFC6B4}
+#text .reveal{font:inherit;color:var(--accent);background:none;border:none;border-bottom:1px dashed var(--accent);
+  padding:0;cursor:pointer;text-align:left}
+#text .revealed{animation:appear .6s ease}
+@keyframes appear{from{opacity:0}to{opacity:1}}
+#choices{display:flex;flex-direction:column;gap:9px;margin-top:20px}
+#choices button{font:inherit;font-size:16px;text-align:left;color:var(--ink);background:rgba(255,255,255,.05);
+  border:1px solid var(--line);border-radius:12px;padding:13px 15px;cursor:pointer;transition:background .15s,border-color .15s}
+#choices button:active{background:rgba(255,255,255,.12)}
+#choices button.flash{border-color:var(--accent);background:rgba(217,163,91,.16)}
+#choices button.restart{color:var(--accent)}
+#text, #choices{animation:appear .5s ease}
+#hint{position:fixed;left:calc(14px + env(safe-area-inset-left));bottom:calc(12px + env(safe-area-inset-bottom));
+  font:12px -apple-system,system-ui,sans-serif;color:var(--faded);pointer-events:none;max-width:calc(100vw - var(--panelW) - 28px)}
+@media (orientation:portrait){ #hint{bottom:calc(46vh + 10px)} }
+
+#title{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+  background:radial-gradient(ellipse at center, rgba(20,22,26,.55), rgba(5,6,8,.95));z-index:5;padding:24px}
+#title h1{font-size:64px;letter-spacing:.04em;font-weight:400}
+#title p{margin-top:10px;color:var(--faded);font-style:italic}
+#title button{margin-top:28px;font:inherit;font-size:18px;color:#1b1309;background:var(--accent);border:none;border-radius:99px;padding:13px 30px;cursor:pointer}
+#title button.secondary{margin-top:12px;background:none;color:var(--faded);border:1px solid var(--line);font-size:15px;padding:10px 22px}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="fade"></div>
+<div id="hint">Drag the scene to look around · Tap a glowing marker to see what you can do with it</div>
+<aside id="panel">
+  <div id="scroll">
+    <div id="where"></div>
+    <div id="text"></div>
+    <div id="choices"></div>
+  </div>
+</aside>
+<div id="title">
+  <h1>Ingrid</h1>
+  <p>Kaldhavn is starving.</p>
+  <button id="begin">Begin</button>
+  <button id="resume" class="secondary hidden">Continue where you left off</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* The story itself is injected here by build.py from your Twine file. */
+const STORY = /*STORY*/null/*END*/;
+
+/* =====================================================================
+   STAGING — which 3D set and which characters appear for each passage.
+   Passages not listed fall back to a guess from their name (see guessSet).
+   Sets: street, outside, kitchen, bedroom, neighbours, edge, forest,
+         oakwood, glade, pyre
+   Cast: father, mother, ingrid, lady (seated), ladyUp (standing), crowd,
+         party, body, rifle
+   ===================================================================== */
+const STAGING = {
+  "Introduction": ["street", []],
+  "Taken in the night": ["street", []],
+  "A Outside": ["outside", ["crowd"]],
+  "A Outside 2": ["outside", ["crowd"]],
+  "A Neighbours 0.5": ["outside", ["crowd"]],
+  "A Speak to villagers": ["outside", ["crowd"]],
+  "A Reconciliation": ["outside", ["crowd", "father", "mother"]],
+  "B Into the woods with the family": ["outside", ["crowd", "father", "mother"]],
+  "D Trial": ["outside", ["crowd", "father", "mother"]],
+  "A Kitchen": ["kitchen", ["father"]],
+  "A Talking to the Father": ["kitchen", ["father"]],
+  "A Kitchen return": ["kitchen", ["father"]],
+  "A thrown out": ["kitchen", ["father"]],
+  "A Back to Cottage": ["kitchen", ["father"]],
+  "A Talking to the Father 2": ["kitchen", ["father"]],
+  "A Talking to the parents": ["kitchen", ["father", "mother"]],
+  "A Confrontation": ["kitchen", ["father"]],
+  "A Confrontation 2": ["kitchen", ["father", "mother", "crowd"]],
+  "A Talking to the Mother": ["kitchen", ["mother"]],
+  "A Talking to the Mother 2": ["kitchen", ["mother"]],
+  "A Searching the Cottage": ["kitchen", ["mother", "crowd"]],
+  "A Bedroom": ["bedroom", ["mother"]],
+  "A Neighbours": ["neighbours", []],
+  "B Search alone": ["edge", []],
+  "B Search party 1 1": ["edge", ["party"]],
+  "B Search party 1.5": ["edge", ["party"]],
+  "Into the woods with the family 2": ["edge", ["party", "father", "mother"]],
+  "B Search party 2": ["forest", ["party"]],
+  "B Deeper with group": ["forest", ["party"]],
+  "B Try to reconnect": ["forest", ["party"]],
+  "B Dead end": ["forest", ["party"]],
+  "B Forest alone": ["forest", []],
+  "B Lost 1": ["forest", []],
+  "B Lost 2": ["forest", []],
+  "B Lost 3": ["forest", ["ladyUp"]],
+  "B The Forest 1": ["forest", ["party", "father", "mother"]],
+  "B Deeper with parents": ["forest", ["party", "father", "mother"]],
+  "B Try to reconnect with parents": ["forest", ["party", "father", "mother"]],
+  "B Attack": ["forest", ["party", "father", "mother"]],
+  "B Attack 1.5": ["forest", ["party", "father", "mother", "ladyUp", "rifle"]],
+  "B Attack 2": ["forest", ["mother", "ladyUp", "body"]],
+  "B Attack 3": ["forest", ["mother", "ladyUp", "body"]],
+  "B Butchered": ["forest", ["mother", "ladyUp", "body"]],
+  "B Forest with mother": ["forest", ["mother", "body", "rifle"]],
+  "B Forest with mother 2": ["oakwood", ["mother"]],
+  "C Oranges": ["glade", ["lady", "ingrid", "mother"]],
+  "C Butchered 2": ["glade", ["lady", "ingrid", "mother"]],
+  "C Oranges 2": ["glade", ["ladyUp", "ingrid", "mother"]],
+  "C Rejected": ["glade", ["ladyUp", "ingrid", "mother"]],
+  "C Accepted": ["glade", ["ladyUp", "ingrid", "mother"]],
+  "C Ingrid leaves": ["glade", ["ladyUp", "ingrid", "mother"]],
+  "C Ingrid stays": ["glade", ["ladyUp", "ingrid", "mother"]],
+  "C Ingrid Remains 2": ["glade", ["ladyUp", "ingrid", "mother"]],
+  "C Drowned": ["glade", ["ladyUp", "ingrid", "mother"]],
+  "D Burn the witch": ["pyre", []]
+};
+function guessSet(name, prev) {
+  const n = name.toLowerCase();
+  if (/bedroom/.test(n)) return "bedroom";
+  if (/neighbour/.test(n)) return "neighbours";
+  if (/kitchen|father|mother|parents|confront|cottage/.test(n)) return "kitchen";
+  if (/orange|glade|ingrid|accepted|rejected|drown/.test(n)) return "glade";
+  if (/trial|witch|burn/.test(n)) return "pyre";
+  if (/forest|lost|deeper|reconnect|dead end|attack|butcher|search party 2/.test(n)) return "forest";
+  if (/search|edge/.test(n)) return "edge";
+  if (/outside|villager/.test(n)) return "outside";
+  return prev || "street";
+}
+
+/* Choices/links whose wording matches these also light up an object in the
+   scene that can be tapped instead of the button. First match wins. */
+const HOTSPOTS = [
+  [/orange/i, "orange"], [/rifle|gun/i, "rifle"], [/creature|demon|rush in/i, "lady"],
+  [/window/i, "window"], [/neighbour/i, "neighbourHouse"], [/bedroom/i, "bedroomDoor"],
+  [/crowd|villagers/i, "crowd"], [/clip/i, "clip"],
+  [/mother|mrs bech|bruise|console/i, "mother"], [/father|accuse/i, "father"],
+  [/go inside|leave the house|return to the kitchen/i, "door"],
+  [/call ingrid|ingrid can decide/i, "ingrid"]
+];
+
+/* =====================================================================
+   1. HARLOWE-LITE: runs the subset of Harlowe 3 this story uses —
+   [[links]], (link:)[hooks], (set:), (if:) on hooks and links,
+   ''bold'' and //italic//. Anything else is logged and skipped.
+   ===================================================================== */
+const unsupported = new Set();
+let vars = {};
+
+function matchClose(src, i, open, close) {
+  let depth = 0, inStr = null;
+  for (let k = i; k < src.length; k++) {
+    const ch = src[k];
+    if (open === "(" && (ch === '"' || ch === "'")) { if (inStr === ch) inStr = null; else if (!inStr) inStr = ch; continue; }
+    if (inStr) continue;
+    if (ch === open) depth++;
+    else if (ch === close && --depth === 0) return k;
+  }
+  return -1;
+}
+function parseLink(inner) {
+  let m;
+  if ((m = inner.match(/^(.*)->(.*)$/s))) return { t: "link", label: m[1].trim(), target: m[2] };
+  if ((m = inner.match(/^(.*?)<-(.*)$/s))) return { t: "link", label: m[2].trim(), target: m[1] };
+  if ((m = inner.match(/^(.*)\|(.*)$/s))) return { t: "link", label: m[1].trim(), target: m[2] };
+  return { t: "link", label: inner.trim(), target: inner };
+}
+function parse(src) {
+  const out = []; let i = 0, text = "";
+  const flush = () => { if (text) { out.push({ t: "text", v: text }); text = ""; } };
+  // a changer like (if:) attaches to the hook or link right after it (spaces allowed, as in Harlowe)
+  const takeAttached = () => {
+    let k = i; while (src[k] === " " || src[k] === "\t") k++;
+    if (src.startsWith("[[", k)) {
+      const e = src.indexOf("]]", k);
+      if (e > 0) { i = e + 2; return [parseLink(src.slice(k + 2, e))]; }
+    }
+    if (src[k] === "[") {
+      const e = matchClose(src, k, "[", "]");
+      if (e > 0) { i = e + 1; return parse(src.slice(k + 1, e)); }
+    }
+    return null;
+  };
+  while (i < src.length) {
+    if (src.startsWith("[[", i)) {
+      const e = src.indexOf("]]", i);
+      if (e > 0) { flush(); out.push(parseLink(src.slice(i + 2, e))); i = e + 2; continue; }
+    }
+    if (src[i] === "(") {
+      const m = /^\(([\w-]+):/.exec(src.slice(i, i + 40));
+      const e = m ? matchClose(src, i, "(", ")") : -1;
+      if (m && e > 0) {
+        flush();
+        const name = m[1].toLowerCase().replace(/-/g, ""), arg = src.slice(i + m[0].length, e).trim();
+        i = e + 1;
+        if (name === "set") { out.push({ t: "set", v: arg }); continue; }
+        if (name === "if" || name === "unless") {
+          const body = takeAttached() || [];
+          out.push({ t: "if", cond: arg, neg: name === "unless", body }); continue;
+        }
+        if (name === "link") {
+          const label = (arg.match(/^"(.*)"$|^'(.*)'$/s) || [])[1] ?? arg;
+          out.push({ t: "reveal", label, body: takeAttached() || [] }); continue;
+        }
+        unsupported.add(name); takeAttached(); continue;
+      }
+    }
+    text += src[i++];
+  }
+  flush();
+  return out;
+}
+function literal(s) {
+  s = s.trim();
+  if (s === "true") return true;
+  if (s === "false") return false;
+  if (/^-?\d+(\.\d+)?$/.test(s)) return +s;
+  const q = s.match(/^"(.*)"$|^'(.*)'$/s); if (q) return q[1] ?? q[2];
+  if (s[0] === "$") return vars[s.slice(1)];
+  unsupported.add("value: " + s); return s;
+}
+function evalCond(src) {
+  const m = src.trim().match(/^\$(\w+)\s*(?:(is not|is)\s+(.+))?$/s);
+  if (!m) { unsupported.add("condition: " + src); return true; }
+  const v = vars[m[1]];
+  if (!m[2]) return !!v;
+  return m[2] === "is" ? v === literal(m[3]) : v !== literal(m[3]);
+}
+function doSet(src) {
+  const m = src.match(/^\$(\w+)\s+to\s+(.+)$/s);
+  if (m) vars[m[1]] = literal(m[2]); else unsupported.add("set: " + src);
+}
+const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function markup(s) {
+  return esc(s).replace(/''([\s\S]+?)''/g, "<b>$1</b>").replace(/\/\/([\s\S]+?)\/\//g, "<i>$1</i>")
+    .replace(/''|\/\//g, "");
+}
+
+/* =====================================================================
+   2. 3D WORLD — one "set" per location, built from simple shapes.
+   ===================================================================== */
+const canvas = document.getElementById("c");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, 1, 0.05, 200);
+camera.rotation.order = "YXZ";
+
+let seed = 7;
+const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+const mats = {};
+const M = (hex, emissive) => {
+  const k = hex + "|" + (emissive || "");
+  return mats[k] || (mats[k] = new THREE.MeshLambertMaterial({ color: hex, emissive: emissive || 0x000000, flatShading: true }));
+};
+function mesh(geo, mat, x = 0, y = 0, z = 0, parent) {
+  const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z);
+  if (parent) parent.add(m);
+  return m;
+}
+const flickers = [], sways = [];
+
+/* ---- props ---- */
+function person(o = {}) {
+  const g = new THREE.Group(), coat = M(o.coat || "#4a3b2e"), skin = M(o.skin || "#d6b596");
+  if (o.skirt) mesh(new THREE.CylinderGeometry(0.2, 0.36, 0.95, 10), M(o.skirtColor || o.coat || "#5a4636"), 0, 0.475, 0, g);
+  else {
+    mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.78, 6), M(o.legs || "#2b2520"), -0.1, 0.39, 0, g);
+    mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.78, 6), M(o.legs || "#2b2520"), 0.1, 0.39, 0, g);
+  }
+  mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.62, 10), coat, 0, 1.08, 0, g);
+  const armL = mesh(new THREE.CylinderGeometry(0.055, 0.05, 0.6, 6), coat, -0.26, 1.07, 0, g); armL.rotation.z = 0.12;
+  const armR = mesh(new THREE.CylinderGeometry(0.055, 0.05, 0.6, 6), coat, 0.26, 1.07, 0, g); armR.rotation.z = -0.12;
+  mesh(new THREE.SphereGeometry(0.135, 14, 10), skin, 0, 1.55, 0, g);
+  const hair = mesh(new THREE.SphereGeometry(0.142, 14, 10, 0, Math.PI * 2, 0, Math.PI / 1.9), M(o.hair || "#2e2218"), 0, 1.57, -0.015, g);
+  if (o.longHair) mesh(new THREE.BoxGeometry(0.26, 0.32, 0.08), M(o.hair), 0, 1.42, -0.1, g);
+  g.scale.setScalar((o.h || 1.75) / 1.75);
+  return g;
+}
+function lady() {
+  const g = new THREE.Group(), robe = M("#e8e2d6"), skin = M("#cfcac2", "#1a1a18"), red = M("#8e1f1a");
+  mesh(new THREE.CylinderGeometry(0.2, 0.5, 1.75, 12), robe, 0, 0.875, 0, g);
+  mesh(new THREE.TorusGeometry(0.47, 0.025, 6, 24), red, 0, 0.18, 0, g).rotation.x = Math.PI / 2;
+  mesh(new THREE.TorusGeometry(0.33, 0.02, 6, 24), red, 0, 0.9, 0, g).rotation.x = Math.PI / 2;
+  mesh(new THREE.CylinderGeometry(0.18, 0.21, 0.5, 10), robe, 0, 1.95, 0, g);
+  for (const s of [-1, 1]) {
+    const arm = mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.95, 6), robe, s * 0.27, 1.75, 0, g); arm.rotation.z = s * -0.12;
+    mesh(new THREE.SphereGeometry(0.06, 8, 6), skin, s * 0.33, 1.27, 0, g);
+  }
+  const head = mesh(new THREE.SphereGeometry(0.15, 14, 10), skin, 0, 2.38, 0, g); head.scale.set(0.85, 1.35, 0.9);
+  mesh(new THREE.SphereGeometry(0.025, 6, 4), M("#000000"), -0.05, 2.43, 0.12, g);
+  mesh(new THREE.SphereGeometry(0.025, 6, 4), M("#000000"), 0.05, 2.43, 0.12, g);
+  const antlerMat = M("#cbbfa8");
+  for (const s of [-1, 1]) {
+    const beam = (len, x, y, rz, parent) => {
+      const b = mesh(new THREE.CylinderGeometry(0.018, 0.03, len, 5), antlerMat, x, y, 0, parent);
+      b.rotation.z = rz; return b;
+    };
+    const a = new THREE.Group(); a.position.set(s * 0.1, 2.52, 0); g.add(a);
+    beam(0.55, s * 0.18, 0.18, s * -1.0, a);
+    beam(0.45, s * 0.38, 0.45, s * -0.25, a);
+    beam(0.3, s * 0.52, 0.42, s * -1.2, a);
+    beam(0.28, s * 0.3, 0.62, s * 0.35, a);
+    beam(0.25, s * 0.45, 0.7, s * -0.6, a);
+  }
+  sways.push(g);
+  return g;
+}
+function pine(x, z, h, parent, rot) {
+  const g = new THREE.Group(); g.position.set(x, 0, z);
+  mesh(new THREE.CylinderGeometry(0.1 * h / 6, 0.2 * h / 6, h * 0.45, 6), rot ? M("#0e0c0b") : M("#3a2a1f"), 0, h * 0.225, 0, g);
+  const green = M(rot ? "#1f2a1c" : "#1d3322");
+  for (let k = 0; k < 3; k++) mesh(new THREE.ConeGeometry(h * (0.26 - k * 0.06), h * 0.42, 7), green, 0, h * (0.38 + k * 0.2), 0, g);
+  g.rotation.y = rand() * 6;
+  parent.add(g); return g;
+}
+function oak(x, z, s, parent, trunkColor = "#4a3a2a", leaf = "#3f6b35") {
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.scale.setScalar(s);
+  const t = mesh(new THREE.CylinderGeometry(0.22, 0.38, 2.6, 7), M(trunkColor), 0, 1.3, 0, g); t.rotation.z = (rand() - 0.5) * 0.25;
+  for (let k = 0; k < 3; k++) {
+    const b = mesh(new THREE.CylinderGeometry(0.06, 0.13, 1.6, 5), M(trunkColor), (k - 1) * 0.5, 2.6, 0, g);
+    b.rotation.z = (k - 1) * 0.7; b.rotation.x = (rand() - 0.5) * 0.6;
+  }
+  for (let k = 0; k < 5; k++) {
+    const f = mesh(new THREE.IcosahedronGeometry(0.9 + rand() * 0.5, 0), M(leaf), (rand() - 0.5) * 2.4, 3.2 + rand() * 1.0, (rand() - 0.5) * 1.6, g);
+    f.rotation.set(rand(), rand(), rand());
+  }
+  g.rotation.y = rand() * 6;
+  parent.add(g); return g;
+}
+function cottage(x, z, w, d, rotY, parent, o = {}) {
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = rotY;
+  mesh(new THREE.BoxGeometry(w, 2.4, d), M(o.wall || "#6d5e4c"), 0, 1.2, 0, g);
+  const tri = new THREE.Shape([new THREE.Vector2(-w / 2 - 0.35, 0), new THREE.Vector2(w / 2 + 0.35, 0), new THREE.Vector2(0, 1.6)]);
+  const roof = mesh(new THREE.ExtrudeGeometry(tri, { depth: d + 0.5, bevelEnabled: false }), M(o.roof || "#3b2f26"), 0, 2.4, -d / 2 - 0.25, g);
+  const door = mesh(new THREE.BoxGeometry(0.9, 1.8, 0.08), M("#2a1d14"), o.doorX || 0, 0.9, d / 2 + 0.03, g);
+  const win = mesh(new THREE.BoxGeometry(0.7, 0.6, 0.08), M("#2a2015", o.lit ? "#c58a3c" : "#000000"), w / 2 - 0.8, 1.45, d / 2 + 0.03, g);
+  parent.add(g);
+  return { g, door, win };
+}
+function lantern(x, y, z, parent, power = 1.3) {
+  const g = new THREE.Group(); g.position.set(x, y, z);
+  mesh(new THREE.BoxGeometry(0.14, 0.2, 0.14), M("#3a2a14", "#ffb347"), 0, 0, 0, g);
+  const l = new THREE.PointLight(0xffa64d, power, 9, 2); g.add(l);
+  flickers.push({ l, base: power });
+  parent.add(g); return g;
+}
+const VILLAGER_COATS = ["#4a3b2e", "#3d4436", "#55453a", "#3a3a40", "#5c4a3a", "#43382f"];
+function crowdGroup(n, cx, cz, r, a0, a1, parent, lanterns = 1, faceX = cx, faceZ = cz) {
+  const g = new THREE.Group(); parent.add(g);
+  for (let k = 0; k < n; k++) {
+    const a = a0 + (a1 - a0) * (k + rand() * 0.5) / n, rr = r + (rand() - 0.5) * 1.2;
+    const woman = rand() < 0.4;
+    const p = person({ coat: VILLAGER_COATS[k % VILLAGER_COATS.length], skirt: woman, h: 1.6 + rand() * 0.25, hair: rand() < 0.5 ? "#2e2218" : "#6b5236" });
+    p.position.set(cx + Math.cos(a) * rr, 0, cz + Math.sin(a) * rr);
+    p.lookAt(faceX, 0, faceZ);
+    g.add(p);
+    if (k < lanterns) lantern(p.position.x + 0.3, 1.1, p.position.z, g, 1.1);
+  }
+  return g;
+}
+function ground(color, size, parent) {
+  const m = mesh(new THREE.PlaneGeometry(size, size, 1, 1), M(color), 0, 0, 0, parent);
+  m.rotation.x = -Math.PI / 2; return m;
+}
+function room(w, d, h, wall, floorC, parent) {
+  ground(floorC, Math.max(w, d), parent).scale.set(w / Math.max(w, d), d / Math.max(w, d), 1);
+  mesh(new THREE.BoxGeometry(w, h, 0.2), M(wall), 0, h / 2, -d / 2, parent);
+  mesh(new THREE.BoxGeometry(0.2, h, d), M(wall), -w / 2, h / 2, 0, parent);
+  mesh(new THREE.BoxGeometry(0.2, h, d), M(wall), w / 2, h / 2, 0, parent);
+  for (let k = -1; k <= 1; k++) mesh(new THREE.BoxGeometry(w, 0.2, 0.25), M("#2a1f16"), 0, h - 0.1, k * d / 3, parent);
+}
+function lying(p) { p.rotation.set(-Math.PI / 2, 0, 0); p.position.y = 0.2; return p; }
+
+/* ---- sets ---- */
+const SETS = {};
+function makeSet(name, o) {
+  const g = new THREE.Group(); g.visible = false; scene.add(g);
+  g.add(new THREE.HemisphereLight(o.sky, o.groundLight || 0x101010, o.hemi ?? 0.5));
+  const set = { name, g, bg: new THREE.Color(o.bg), fog: [o.fogNear ?? 4, o.fogFar ?? 30], cam: o.cam, cast: {}, hot: {}, label: o.label };
+  SETS[name] = set; return set;
+}
+function castMember(set, token, obj, hotName) {
+  set.g.add(obj); obj.visible = false;
+  (set.cast[token] = set.cast[token] || []).push(obj);
+  if (hotName) (set.hot[hotName] = set.hot[hotName] || []).push(obj);
+}
+function hot(set, name, obj) { (set.hot[name] = set.hot[name] || []).push(obj); }
+
+const FATHER = { coat: "#3b2b22", hair: "#1c1410", h: 1.85 };
+const MOTHER = { coat: "#5b4a3d", skirt: true, skirtColor: "#4b3a30", hair: "#7a5a32", longHair: true, h: 1.68 };
+const INGRID = { coat: "#7a6a58", skirt: true, skirtColor: "#8c7a63", hair: "#d8c27a", longHair: true, h: 1.15 };
+
+function buildSets() {
+  // Kaldhavn street at night
+  let s = makeSet("street", { label: "Kaldhavn", sky: 0x3a4660, bg: "#0a0d14", fogNear: 3, fogFar: 26, hemi: 0.35,
+    cam: { pos: [0, 1.7, 6], look: [0, 1.3, -10], drift: [0, 0, -2.5] } });
+  ground("#2c241c", 80, s.g);
+  for (let z = 2; z > -30; z -= 8) { cottage(-6, z, 4, 4, Math.PI / 2, s.g, { lit: rand() < 0.3 }); cottage(6, z - 4, 4, 4, -Math.PI / 2, s.g, { lit: rand() < 0.3 }); }
+  const walkers = crowdGroup(5, 0, -5, 1.6, 0, Math.PI * 2, s.g, 1, 0, -40);
+  walkers.position.z = -2;
+
+  // outside the Bech cottage
+  s = makeSet("outside", { label: "The Bech cottage", sky: 0x3a4660, bg: "#0a0d14", fogNear: 6, fogFar: 40, hemi: 0.4,
+    cam: { pos: [-3.5, 1.9, 8], look: [0.8, 1.3, -4], drift: [1.2, 0, -0.8] } });
+  ground("#2a2219", 90, s.g);
+  const bech = cottage(0, -6, 5, 4, 0, s.g, { lit: true });
+  hot(s, "door", bech.door);
+  const ingWin = mesh(new THREE.BoxGeometry(0.08, 0.6, 0.7), M("#2a2015", "#3b4a66"), 2.53, 1.45, -6.6, s.g);
+  hot(s, "window", ingWin);
+  const nb = cottage(8.5, -6.5, 4, 4, -Math.PI / 2, s.g, { lit: true });
+  hot(s, "neighbourHouse", nb.g);
+  for (let k = 0; k < 40; k++) pine(-25 + rand() * 50, -18 - rand() * 14, 6 + rand() * 4, s.g);
+  castMember(s, "crowd", crowdGroup(9, 0, -1, 4, Math.PI * 0.15, Math.PI * 0.85, s.g, 2, 0, -3), "crowd");
+  const fo = person(FATHER); fo.position.set(-1.2, 0, -2.6); castMember(s, "father", fo, "father");
+  const mo = person(MOTHER); mo.position.set(-0.4, 0, -2.8); castMember(s, "mother", mo, "mother");
+  lantern(-0.9, 2.1, -3.9, s.g, 0.9);
+
+  // kitchen
+  s = makeSet("kitchen", { label: "The Bech kitchen", sky: 0x5a4a3a, bg: "#0b0806", fogNear: 8, fogFar: 30, hemi: 0.35,
+    cam: { pos: [0.6, 1.75, 5.2], look: [0, 1.15, -1], drift: [-0.8, 0, -0.4] } });
+  room(7, 6.5, 2.8, "#5a4a3a", "#3b2c20", s.g);
+  const bdoor = mesh(new THREE.BoxGeometry(0.9, 2, 0.1), M("#24180f"), 1.7, 1, -3.15, s.g); hot(s, "bedroomDoor", bdoor);
+  mesh(new THREE.BoxGeometry(0.9, 2, 0.1), M("#24180f"), -1.7, 1, -3.15, s.g);
+  const fdoor = mesh(new THREE.BoxGeometry(0.1, 2, 1.1), M("#0d1424", "#0a1222"), 3.4, 1, 1.2, s.g); hot(s, "door", fdoor);
+  mesh(new THREE.BoxGeometry(1.4, 1.2, 0.6), M("#2a2420"), -3.15, 0.6, -0.8, s.g);
+  const fire = mesh(new THREE.ConeGeometry(0.22, 0.45, 6), M("#ff7a1a", "#ff6a10"), -3.05, 0.35, -0.8, s.g);
+  const fl = new THREE.PointLight(0xff8a3a, 1.6, 10, 2); fl.position.set(-2.6, 0.8, -0.8); s.g.add(fl); flickers.push({ l: fl, base: 1.6, m: fire });
+  mesh(new THREE.BoxGeometry(1.9, 0.08, 1), M("#5a4027"), 0, 0.78, 0, s.g);
+  for (const [x, z] of [[-0.85, -0.42], [0.85, -0.42], [-0.85, 0.42], [0.85, 0.42]]) mesh(new THREE.BoxGeometry(0.08, 0.78, 0.08), M("#4a3220"), x, 0.39, z, s.g);
+  for (const x of [-0.5, 0.6]) { mesh(new THREE.BoxGeometry(0.45, 0.06, 0.45), M("#4a3220"), x, 0.46, 0.85, s.g); }
+  for (const [x, z] of [[0.25, 0.1], [0.4, -0.15], [-0.3, 0.05]]) mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.3, 8), M("#244a2c", "#06120a"), x, 0.97, z, s.g);
+  const candle = new THREE.PointLight(0xffc070, 0.8, 6, 2); candle.position.set(0, 1.2, 0); s.g.add(candle); flickers.push({ l: candle, base: 0.8 });
+  const fk = person(FATHER); fk.position.set(-1.0, 0, 0.9); fk.lookAt(0.6, 0, 5); castMember(s, "father", fk, "father");
+  const mk = person(MOTHER); mk.position.set(1.25, 0, -0.75); mk.lookAt(0, 0, 3); castMember(s, "mother", mk, "mother");
+  castMember(s, "crowd", crowdGroup(3, 2.6, 1.8, 0.8, Math.PI * 0.6, Math.PI * 1.4, s.g, 0, 0, 0), "crowd");
+
+  // Ingrid's bedroom
+  s = makeSet("bedroom", { label: "Ingrid's bedroom", sky: 0x40507a, bg: "#07090e", fogNear: 8, fogFar: 25, hemi: 0.3,
+    cam: { pos: [0.4, 1.6, 3.6], look: [0, 1.0, -2], drift: [-0.5, 0, -0.3] } });
+  room(5, 5, 2.6, "#4e4438", "#33281e", s.g);
+  mesh(new THREE.BoxGeometry(1.0, 0.45, 1.9), M("#4a3220"), -1.4, 0.225, -1.3, s.g);
+  mesh(new THREE.BoxGeometry(0.95, 0.12, 1.85), M("#b9ae98"), -1.4, 0.5, -1.3, s.g);
+  mesh(new THREE.BoxGeometry(0.6, 0.12, 0.35), M("#d9d0bc"), -1.4, 0.6, -2.0, s.g);
+  const bwin = mesh(new THREE.BoxGeometry(1.0, 0.9, 0.1), M("#1a2233", "#2a3d66"), 0.9, 1.5, -2.45, s.g); hot(s, "window", bwin);
+  mesh(new THREE.BoxGeometry(1.0, 0.05, 0.12), M("#2a1d14"), 0.9, 1.5, -2.4, s.g);
+  mesh(new THREE.BoxGeometry(0.05, 0.9, 0.12), M("#2a1d14"), 0.9, 1.5, -2.4, s.g);
+  const moon = new THREE.SpotLight(0x8aa6ff, 1.2, 12, 0.6, 0.6); moon.position.set(0.9, 1.6, -3.5); moon.target.position.set(-0.5, 0, 0.5); s.g.add(moon, moon.target);
+  const door2 = mesh(new THREE.BoxGeometry(0.1, 2, 0.9), M("#24180f"), 2.45, 1, 1.2, s.g); hot(s, "door", door2);
+  const mb = lying(person(MOTHER)); mb.position.set(-1.4, 0.62, -1.1); mb.rotation.z = Math.PI; castMember(s, "mother", mb, "mother");
+
+  // neighbours' cottage
+  s = makeSet("neighbours", { label: "The neighbours' cottage", sky: 0x5a4a3a, bg: "#0b0806", fogNear: 8, fogFar: 25, hemi: 0.3,
+    cam: { pos: [0, 1.6, 4], look: [0, 0.9, -1], drift: [0.6, 0, -0.3] } });
+  room(5.5, 5, 2.6, "#5c4c3a", "#3a2b1f", s.g);
+  const f2 = mesh(new THREE.ConeGeometry(0.2, 0.4, 6), M("#ff7a1a", "#ff6a10"), -2.4, 0.3, -1.6, s.g);
+  const fl2 = new THREE.PointLight(0xff8a3a, 1.5, 9, 2); fl2.position.set(-2, 0.8, -1.4); s.g.add(fl2); flickers.push({ l: fl2, base: 1.5, m: f2 });
+  mesh(new THREE.BoxGeometry(0.8, 0.45, 0.7), M("#4a3220"), 0, 0.225, -1, s.g);
+  const nm = person({ coat: "#4b5240", skirt: true, hair: "#3a2a1a", longHair: true, h: 1.65 }); nm.position.set(0, -0.35, -1.05); s.g.add(nm);
+  const boy = lying(person({ coat: "#a59a86", h: 1.0, hair: "#5a4026" })); boy.position.set(0.15, 0.62, -0.5); boy.rotation.z = Math.PI / 2; s.g.add(boy);
+  hot(s, "mother", nm);
+
+  // forest edge
+  s = makeSet("edge", { label: "The edge of the forest", sky: 0x34405a, bg: "#090c12", fogNear: 5, fogFar: 38, hemi: 0.35,
+    cam: { pos: [0, 1.7, 5], look: [0, 1.4, -12], drift: [0, 0, -2] } });
+  ground("#25261a", 100, s.g);
+  for (let k = 0; k < 70; k++) pine(-30 + rand() * 60, -12 - rand() * 22, 6 + rand() * 5, s.g);
+  for (let k = 0; k < 3; k++) cottage(-8 + k * 8, 14, 4, 4, Math.PI, s.g, { lit: k === 1 });
+  const clip = mesh(new THREE.TorusGeometry(0.06, 0.02, 6, 12), M("#d9b24a", "#b08020"), 0.6, 0.06, -2.5, s.g); clip.rotation.x = Math.PI / 2;
+  hot(s, "clip", clip);
+  const partyG = new THREE.Group();
+  partyG.add(crowdGroup(4, -3.2, -1, 1.4, 0, Math.PI * 2, s.g, 2, 0, -20), crowdGroup(4, 3.2, -1.5, 1.4, 0, Math.PI * 2, s.g, 1, 0, -20));
+  castMember(s, "party", partyG);
+  const fe = person(FATHER); fe.position.set(-1.0, 0, 0.4); castMember(s, "father", fe, "father");
+  const me = person(MOTHER); me.position.set(-0.2, 0, 0.6); castMember(s, "mother", me, "mother");
+
+  // the dark forest
+  s = makeSet("forest", { label: "The forest", sky: 0x22302a, bg: "#05070a", fogNear: 2, fogFar: 19, hemi: 0.3,
+    cam: { pos: [0, 1.7, 5], look: [0, 1.3, -6], drift: [0.6, 0, -1.6] } });
+  ground("#1d1a14", 120, s.g);
+  for (let k = 0; k < 160; k++) {
+    const x = -30 + rand() * 60, z = 8 - rand() * 55;
+    if (Math.abs(x) < 3.2 && z > -9) continue; // keep a clearing in front of the camera
+    pine(x, z, 7 + rand() * 6, s.g, rand() < 0.18);
+  }
+  for (let k = 0; k < 30; k++) mesh(new THREE.IcosahedronGeometry(0.3 + rand() * 0.3, 0), M("#2a2418"), -10 + rand() * 20, 0.1, -rand() * 20, s.g);
+  const party = new THREE.Group();
+  for (const [x, z] of [[-2.2, -3.5], [2.4, -4.2], [-0.4, -6.5]]) {
+    const p = person({ coat: VILLAGER_COATS[(x * 10 | 0) & 3], h: 1.75 }); p.position.set(x, 0, z); p.lookAt(0, 0, -20); party.add(p);
+    lantern(x + 0.3, 1.1, z, party, 1.2);
+  }
+  castMember(s, "party", party);
+  const ff = person(FATHER); ff.position.set(1.0, 0, -1.8); castMember(s, "father", ff, "father");
+  const mf = person(MOTHER); mf.position.set(-1.3, 0, -1.2); mf.lookAt(1, 0, -2.5); castMember(s, "mother", mf, "mother");
+  lantern(-1.0, 1.1, -1.2, mf, 1.3);
+  const lf = lady(); lf.position.set(1.6, 0, -3.3); lf.lookAt(0, 0, 5); castMember(s, "ladyUp", lf, "lady");
+  const body = lying(person(FATHER)); body.position.set(1.0, 0.15, -2.2); body.rotation.z = 0.6; castMember(s, "body", body);
+  const pool = mesh(new THREE.CircleGeometry(0.9, 18), M("#3a0b08", "#1a0302"), 1.0, 0.02, -1.6, null); pool.rotation.x = -Math.PI / 2;
+  castMember(s, "body", pool);
+  const rifle = new THREE.Group();
+  mesh(new THREE.BoxGeometry(1.1, 0.05, 0.05), M("#3a2a1a"), 0, 0, 0, rifle);
+  mesh(new THREE.BoxGeometry(0.6, 0.03, 0.03), M("#555555"), 0.5, 0.03, 0, rifle);
+  rifle.position.set(-0.6, 0.05, -0.6); rifle.rotation.y = 0.7;
+  castMember(s, "rifle", rifle, "rifle");
+
+  // the warm oak wood
+  s = makeSet("oakwood", { label: "Somewhere else", sky: 0x9fb07a, groundLight: 0x3a2a1a, bg: "#2a2e22", fogNear: 3, fogFar: 26, hemi: 0.75,
+    cam: { pos: [0, 1.7, 5], look: [0, 1.4, -8], drift: [0, 0, -2.5] } });
+  ground("#3a4a2a", 100, s.g);
+  for (let k = 0; k < 60; k++) {
+    const x = -24 + rand() * 48, z = 6 - rand() * 40;
+    if (Math.abs(x) < 2.6 && z > -12) continue;
+    oak(x, z, 1 + rand() * 0.7, s.g);
+  }
+  for (let k = 0; k < 40; k++) mesh(new THREE.IcosahedronGeometry(0.35 + rand() * 0.4, 0), M("#4f7a3a"), -12 + rand() * 24, 0.2, 4 - rand() * 24, s.g);
+  const mo2 = person(MOTHER); mo2.position.set(0.4, 0, -2.5); mo2.lookAt(0, 0, -20); castMember(s, "mother", mo2, "mother");
+
+  // the glade at dawn
+  s = makeSet("glade", { label: "The glade", sky: 0xffd9a8, groundLight: 0x3a4a2a, bg: "#d7a77a", fogNear: 10, fogFar: 48, hemi: 0.95,
+    cam: { pos: [-1.5, 1.7, 6.5], look: [0.2, 1.3, -3], drift: [1.4, 0, -1.0] } });
+  ground("#5a7a3a", 120, s.g);
+  const sun = new THREE.DirectionalLight(0xffc88a, 0.7); sun.position.set(-10, 6, -12); s.g.add(sun);
+  for (let k = 0; k < 34; k++) { const a = k / 34 * Math.PI * 2; oak(Math.cos(a) * (13 + rand() * 4), Math.sin(a) * (13 + rand() * 4) - 3, 1.2 + rand() * 0.6, s.g); }
+  const pond = mesh(new THREE.CircleGeometry(1.7, 28), M("#3f6f8f", "#0e2433"), 3.2, 0.02, -1.6, s.g); pond.rotation.x = -Math.PI / 2;
+  hot(s, "pool", pond);
+  const tree = oak(0, -4.5, 1.25, s.g, "#e9e4da", "#5b8a3f");
+  let hotOrange = null;
+  for (let k = 0; k < 16; k++) {
+    const o = mesh(new THREE.SphereGeometry(0.13, 10, 8), M("#f08a1c", "#5a2a00"), (rand() - 0.5) * 3, 3.4 + rand() * 1.3, -4.5 + (rand() - 0.5) * 2, s.g);
+    if (!hotOrange) hotOrange = o;
+  }
+  const handOrange = mesh(new THREE.SphereGeometry(0.11, 10, 8), M("#f08a1c", "#5a2a00"), 0, 0, 0, null);
+  const lg = lady(); lg.position.set(-0.9, -0.8, -3.6); lg.lookAt(0, -0.8, 5); castMember(s, "lady", lg, "lady");
+  const pipes = mesh(new THREE.BoxGeometry(0.25, 0.12, 0.04), M("#c9a86a"), 0, 0.85, 0.3, lg);
+  const lu = lady(); lu.position.set(0.2, 0, -1.6); lu.lookAt(-1.5, 0, 6.5); castMember(s, "ladyUp", lu, "lady");
+  handOrange.position.set(0.33, 1.3, 0.25); lu.add(handOrange);
+  hot(s, "orange", handOrange); hot(s, "orange", hotOrange);
+  const ig = person(INGRID); ig.position.set(0.6, 0, -3.0); ig.lookAt(-1.5, 0, 6.5); castMember(s, "ingrid", ig, "ingrid");
+  const mg = person(MOTHER); mg.position.set(-2.3, 0, 1.5); mg.lookAt(0, 0, -3); castMember(s, "mother", mg, "mother");
+
+  // the pyre
+  s = makeSet("pyre", { label: "Kaldhavn, morning", sky: 0x9aa0a8, bg: "#5d6168", fogNear: 8, fogFar: 45, hemi: 0.7,
+    cam: { pos: [0, 1.8, 7.5], look: [0, 1.5, -4], drift: [0, 0, -1.5] } });
+  ground("#3a3128", 100, s.g);
+  for (let k = 0; k < 6; k++) cottage(-14 + k * 5.5, -14, 4, 4, 0, s.g);
+  for (const x of [-1.3, 1.3]) {
+    for (let k = 0; k < 7; k++) { const log = mesh(new THREE.CylinderGeometry(0.1, 0.1, 1.6, 6), M("#4a3220"), x, 0.2 + (k % 2) * 0.15, -4, s.g); log.rotation.set(Math.PI / 2, k * 0.45, 0); }
+    mesh(new THREE.CylinderGeometry(0.08, 0.08, 3.2, 6), M("#3a2818"), x, 1.6, -4.25, s.g);
+    const bound = person(x < 0 ? FATHER : MOTHER); bound.position.set(x, 0.4, -4.05); s.g.add(bound);
+    for (let k = 0; k < 4; k++) {
+      const fl3 = mesh(new THREE.ConeGeometry(0.22, 0.9, 6), M("#ff7a1a", "#ff5a00"), x + (k - 1.5) * 0.3, 0.6, -3.7 + (k % 2) * 0.2, s.g);
+      flickers.push({ m: fl3 });
+    }
+    const pl = new THREE.PointLight(0xff7a2a, 2.2, 12, 2); pl.position.set(x, 1.2, -3.2); s.g.add(pl); flickers.push({ l: pl, base: 2.2 });
+  }
+  crowdGroup(12, 0, -3.5, 5.5, Math.PI * 0.1, Math.PI * 0.9, s.g, 0, 0, -4);
+  const priest = person({ coat: "#111111", legs: "#111111", h: 1.8 }); priest.position.set(0, 0, -1.6); priest.lookAt(0, 0, 8); s.g.add(priest);
+}
+
+/* =====================================================================
+   3. PLAYER
+   ===================================================================== */
+const $ = id => document.getElementById(id);
+let current = null, currentSet = null, setTime = 0;
+let activeHot = [];   // [{obj, marker, buttons}]
+const marker = () => {
+  const cv = document.createElement("canvas"); cv.width = cv.height = 64;
+  const g = cv.getContext("2d");
+  g.strokeStyle = "#ffd28a"; g.lineWidth = 6; g.beginPath(); g.arc(32, 32, 22, 0, Math.PI * 2); g.stroke();
+  g.fillStyle = "#ffd28a"; g.beginPath(); g.arc(32, 32, 8, 0, Math.PI * 2); g.fill();
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false, transparent: true }));
+  s.renderOrder = 10; s.scale.setScalar(0.45); return s;
+};
+
+function findPassage(target) {
+  if (STORY.passages[target] != null) return target;
+  const t = target.trim();
+  return Object.keys(STORY.passages).find(n => n.trim() === t) || null;
+}
+function staging(name) {
+  return STAGING[name] || STAGING[name.trim()] || [guessSet(name, currentSet && currentSet.name), []];
+}
+
+function showSet(name, cast, after) {
+  const set = SETS[name] || SETS.street;
+  const change = set !== currentSet;
+  const apply = () => {
+    for (const s of Object.values(SETS)) s.g.visible = s === set;
+    for (const [tok, objs] of Object.entries(set.cast)) objs.forEach(o => o.visible = cast.includes(tok));
+    scene.background = set.bg; scene.fog = new THREE.Fog(set.bg, set.fog[0], set.fog[1]);
+    if (change) { setTime = 0; look.yaw = look.pitch = 0; }
+    currentSet = set;
+    $("where").textContent = set.label || "";
+    if (after) after();
+  };
+  if (change && currentSet) {
+    $("fade").classList.add("on");
+    setTimeout(() => { apply(); $("fade").classList.remove("on"); }, 450);
+  } else apply();
+}
+
+function goTo(target) {
+  const name = findPassage(target);
+  if (name == null) { alert(`Broken link: no passage called "${target}"`); return; }
+  current = name;
+  const snapshot = JSON.stringify(vars); // state on entry, so resuming replays this passage correctly
+  try { localStorage.setItem("ingrid3d", JSON.stringify({ passage: name, vars: snapshot })); } catch (e) {}
+  const [setName, cast] = staging(name);
+  renderPassage(name);
+  showSet(setName, cast, rebuildHot);
+  $("scroll").scrollTop = 0;
+}
+
+function renderPassage(name) {
+  const textEl = $("text"), choicesEl = $("choices");
+  textEl.innerHTML = ""; choicesEl.innerHTML = "";
+  textEl.style.animation = choicesEl.style.animation = "none"; void textEl.offsetWidth;
+  textEl.style.animation = choicesEl.style.animation = "";
+  clearHot();
+  const nodes = parse(STORY.passages[name]);
+  renderNodes(nodes, textEl, choicesEl);
+  tidyWhitespace(textEl);
+}
+function renderNodes(nodes, into, choicesEl) {
+  for (const n of nodes) {
+    if (n.t === "text") into.insertAdjacentHTML("beforeend", markup(n.v));
+    else if (n.t === "set") doSet(n.v);
+    else if (n.t === "if") { if (evalCond(n.cond) !== n.neg) renderNodes(n.body, into, choicesEl); }
+    else if (n.t === "link") {
+      const b = document.createElement("button");
+      b.textContent = n.label;
+      if (/play again/i.test(n.label)) b.className = "restart";
+      b.onclick = () => goTo(n.target);
+      choicesEl.appendChild(b);
+    } else if (n.t === "reveal") {
+      const b = document.createElement("button");
+      b.className = "reveal"; b.textContent = n.label;
+      const run = () => {
+        if (!b.isConnected) return;
+        const span = document.createElement("span"); span.className = "revealed";
+        b.replaceWith(span);
+        const extra = document.createElement("div");
+        renderNodes(n.body, span, extra);
+        // links revealed inside a hook join the choices list
+        [...extra.children].forEach(c => choicesEl.appendChild(c));
+        tidyWhitespace(span);
+        rebuildHot();
+      };
+      b.onclick = run;
+      into.appendChild(b);
+    }
+  }
+}
+function tidyWhitespace(el) {
+  // collapse the blank lines Harlowe source leaves behind (e.g. around (set:) lines),
+  // editing text nodes in place so button handlers survive
+  el.normalize();
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const texts = []; while (walker.nextNode()) texts.push(walker.currentNode);
+  texts.forEach(t => t.nodeValue = t.nodeValue.replace(/[ \t]*\n[ \t]*/g, "\n").replace(/\n{3,}/g, "\n\n"));
+  if (texts.length && el.id === "text") {
+    texts[0].nodeValue = texts[0].nodeValue.replace(/^\s+/, "");
+    texts[texts.length - 1].nodeValue = texts[texts.length - 1].nodeValue.replace(/\s+$/, "");
+  }
+}
+
+/* tapping objects in the scene: every on-screen choice or (link:) whose wording
+   matches HOTSPOTS gets a glowing marker on the matching object */
+function clearHot() {
+  for (const h of activeHot) scene.remove(h.marker);
+  activeHot = [];
+}
+function visibleInScene(o) { for (let p = o; p; p = p.parent) if (!p.visible) return false; return true; }
+function rebuildHot() {
+  clearHot();
+  if (!currentSet) return;
+  const buttons = [...document.querySelectorAll("#text button.reveal, #choices button")];
+  const byObj = new Map();
+  for (const button of buttons) {
+    const rule = HOTSPOTS.find(([re]) => re.test(button.textContent));
+    const obj = rule && (currentSet.hot[rule[1]] || []).find(visibleInScene);
+    if (!obj) continue;
+    if (!byObj.has(obj)) byObj.set(obj, []);
+    byObj.get(obj).push(button);
+  }
+  for (const [obj, buttons] of byObj) {
+    const m = marker();
+    const box = new THREE.Box3().setFromObject(obj), top = new THREE.Vector3();
+    box.getCenter(top); top.y = box.max.y + 0.35;
+    m.position.copy(top); scene.add(m);
+    activeHot.push({ obj, marker: m, buttons });
+  }
+}
+
+const raycaster = new THREE.Raycaster();
+function tap(x, y) {
+  if (!activeHot.length) return;
+  raycaster.setFromCamera({ x: (x / innerWidth) * 2 - 1, y: -(y / innerHeight) * 2 + 1 }, camera);
+  const targets = [];
+  for (const h of activeHot) { targets.push(h.marker); h.obj.traverse(o => o.isMesh && targets.push(o)); }
+  const hit = raycaster.intersectObjects(targets, false)[0];
+  if (!hit) return;
+  const owns = (h, o) => { let f = h.marker === o; h.obj.traverse(c => { if (c === o) f = true; }); return f; };
+  const h = activeHot.find(h => owns(h, hit.object));
+  if (!h) return;
+  // a (link:) reveal only shows more text, so a tap can run it directly. Story choices
+  // can't be undone, so a tap only highlights them and the player confirms in the panel.
+  if (h.buttons.length === 1 && h.buttons[0].classList.contains("reveal")) { h.buttons[0].click(); return; }
+  h.buttons[0].scrollIntoView({ behavior: "smooth", block: "nearest" });
+  h.buttons.forEach(b => { b.classList.add("flash"); setTimeout(() => b.classList.remove("flash"), 1600); });
+}
+
+/* =====================================================================
+   4. INPUT + LOOP
+   ===================================================================== */
+const look = { yaw: 0, pitch: 0 };
+const ptrs = {};
+canvas.addEventListener("pointerdown", e => {
+  canvas.setPointerCapture(e.pointerId);
+  ptrs[e.pointerId] = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now() };
+});
+canvas.addEventListener("pointermove", e => {
+  const p = ptrs[e.pointerId]; if (!p) return;
+  look.yaw = Math.max(-1.3, Math.min(1.3, look.yaw - (e.clientX - p.x) * 0.004));
+  look.pitch = Math.max(-0.5, Math.min(0.5, look.pitch - (e.clientY - p.y) * 0.004));
+  p.x = e.clientX; p.y = e.clientY;
+});
+const endPtr = e => {
+  const p = ptrs[e.pointerId]; if (!p) return; delete ptrs[e.pointerId];
+  if (e.type === "pointerup" && Math.hypot(e.clientX - p.sx, e.clientY - p.sy) < 12 && performance.now() - p.t < 400) tap(e.clientX, e.clientY);
+};
+canvas.addEventListener("pointerup", endPtr);
+canvas.addEventListener("pointercancel", endPtr);
+document.addEventListener("gesturestart", e => e.preventDefault());
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.fov = w > h ? 55 : 75; // portrait is narrow, so widen the view to keep characters in frame
+  // shift the picture so the action sits beside/above the text panel, not under it
+  const panel = $("panel").getBoundingClientRect();
+  if (w > h) camera.setViewOffset(w, h, panel.width / 2, 0, w, h);
+  else camera.setViewOffset(w, h, 0, panel.height / 2 * 0.8, w, h);
+  camera.updateProjectionMatrix();
+}
+addEventListener("resize", resize);
+
+let last = performance.now();
+const tmpLook = new THREE.Vector3();
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.05); last = now;
+  setTime += dt;
+  if (currentSet) {
+    const c = currentSet.cam, k = 1 - Math.exp(-setTime / 18); // slow ease along the drift path
+    camera.position.set(c.pos[0] + c.drift[0] * k, c.pos[1] + c.drift[1] * k + Math.sin(now / 1400) * 0.02, c.pos[2] + c.drift[2] * k);
+    tmpLook.set(c.look[0], c.look[1], c.look[2]);
+    const dir = tmpLook.sub(camera.position);
+    const baseYaw = Math.atan2(-dir.x, -dir.z), basePitch = Math.atan2(dir.y, Math.hypot(dir.x, dir.z));
+    camera.rotation.set(basePitch + look.pitch, baseYaw + look.yaw, 0);
+  }
+  for (const f of flickers) {
+    const n = 0.85 + Math.sin(now / 90 + (f.base || 1) * 7) * 0.08 + Math.random() * 0.07;
+    if (f.l) f.l.intensity = f.base * n;
+    if (f.m) f.m.scale.y = 0.8 + n * 0.3;
+  }
+  for (const g of sways) g.rotation.z = Math.sin(now / 1300) * 0.015;
+  for (const h of activeHot) h.marker.material.opacity = 0.55 + Math.sin(now / 280) * 0.45;
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+/* ---- start ---- */
+buildSets();
+resize();
+requestAnimationFrame(frame);
+showSet("street", []);
+let saved = null;
+try { saved = JSON.parse(localStorage.getItem("ingrid3d") || "null"); } catch (e) {}
+if (saved && STORY.passages[saved.passage] != null) $("resume").classList.remove("hidden");
+$("begin").onclick = () => { $("title").classList.add("hidden"); vars = {}; goTo(STORY.start); };
+$("resume").onclick = () => { $("title").classList.add("hidden"); vars = JSON.parse(saved.vars); goTo(saved.passage); };
+if (unsupported.size) console.warn("Harlowe features not supported:", [...unsupported]);
+window.__ingrid = { parse, goTo, get vars() { return vars; }, set vars(v) { vars = v; }, unsupported, get current() { return current; } };
+</script>
+</body>
+</html>
