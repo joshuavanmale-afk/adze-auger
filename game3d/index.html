@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#101418">
+<title>Text Adventure 3D</title>
+<style>
+:root{
+  --bg:#101418; --panel:rgba(16,20,24,.78); --ink:#EDE8DF; --faded:#A39C90; --accent:#E0A040; --line:rgba(255,255,255,.12);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;touch-action:none;overscroll-behavior:none}
+canvas{display:block;width:100vw;height:100vh;touch-action:none}
+
+#panel{position:fixed;top:calc(12px + env(safe-area-inset-top));left:calc(12px + env(safe-area-inset-left));
+  width:min(400px, calc(100vw - 24px));background:var(--panel);border:1px solid var(--line);border-radius:14px;
+  padding:14px 16px;pointer-events:none;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+#roomName{font-size:18px;font-weight:700;letter-spacing:-.01em}
+#roomDesc{font-size:14px;line-height:1.45;color:var(--ink);margin-top:6px}
+#log{margin-top:8px;font-size:13px;line-height:1.4;color:var(--faded)}
+#log p{margin-top:3px}
+#log p:last-child{color:var(--accent)}
+
+#inv{position:fixed;top:calc(12px + env(safe-area-inset-top));right:calc(12px + env(safe-area-inset-right));
+  display:flex;flex-direction:column;align-items:flex-end;gap:6px;max-width:40vw}
+#inv .label{font-size:11px;letter-spacing:.1em;color:var(--faded);background:var(--panel);padding:4px 8px;border-radius:6px}
+#inv button{font:inherit;font-size:13px;color:var(--ink);background:var(--panel);border:1px solid var(--line);
+  border-radius:99px;padding:7px 12px;display:flex;align-items:center;gap:7px;cursor:pointer}
+#inv button i{width:10px;height:10px;border-radius:50%;display:inline-block}
+
+#stick{position:fixed;width:120px;height:120px;margin:-60px 0 0 -60px;border-radius:50%;
+  border:2px solid rgba(255,255,255,.35);background:rgba(255,255,255,.06);pointer-events:none;display:none}
+#knob{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px 0 0 -26px;border-radius:50%;background:rgba(255,255,255,.45)}
+#hint{position:fixed;bottom:calc(16px + env(safe-area-inset-bottom));left:0;right:0;text-align:center;
+  font-size:12px;color:var(--faded);pointer-events:none}
+
+.overlay{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;padding:24px;background:rgba(10,12,14,.88);z-index:10}
+.overlay h1{font-size:34px;letter-spacing:-.02em}
+.overlay p{max-width:520px;margin-top:12px;line-height:1.5;color:var(--faded)}
+.overlay button{margin-top:22px;font:inherit;font-size:17px;font-weight:600;color:#1a1408;background:var(--accent);
+  border:none;border-radius:99px;padding:13px 28px;cursor:pointer}
+.hidden{display:none!important}
+#warnings{margin-top:14px;font-size:12px;color:#E08A6A;max-width:520px;text-align:left}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="panel">
+  <h1 id="roomName"></h1>
+  <p id="roomDesc"></p>
+  <div id="log"></div>
+</div>
+<div id="inv"></div>
+<div id="stick"><div id="knob"></div></div>
+<div id="hint">Left side: drag to walk · Right side: drag to look · Tap an object or door to use it</div>
+
+<div id="start" class="overlay">
+  <h1 id="title"></h1>
+  <p id="intro"></p>
+  <button id="go">Begin</button>
+  <div id="warnings"></div>
+</div>
+<div id="win" class="overlay hidden">
+  <h1>You win</h1>
+  <p id="winText"></p>
+  <button onclick="location.reload()">Play again</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =====================================================================
+   YOUR TEXT GAME GOES HERE.
+   Describe it as rooms, exits, items and locks. The engine below turns
+   it into a walkable 3D world. Exits must be north/south/east/west
+   (up/down and other directions can't be laid out on a flat floor).
+   ===================================================================== */
+const GAME = {
+  title: "The Dark Lighthouse",
+  intro: "The lighthouse lamp has gone out and a storm is coming. Get it lit before the ships reach the rocks.",
+  start: "shore",
+  rooms: {
+    shore: {
+      name: "Rocky Shore", color: "#4f5d6b",
+      desc: "Waves break on black rocks. The lighthouse looms to the north, its lamp dark.",
+      exits: { north: "base" }
+    },
+    base: {
+      name: "Lighthouse Base", color: "#6b5a48",
+      desc: "A cold, round room smelling of salt. A spiral stair rises to the north behind an iron gate.",
+      exits: { south: "shore", east: "store", west: "cottage", north: "stair" },
+      locked: { north: "iron_key" },
+      lockedText: "The iron gate is padlocked shut."
+    },
+    store: {
+      name: "Storeroom", color: "#5a5040",
+      desc: "Shelves of rope, nets and rusted tins.",
+      exits: { west: "base" },
+      items: ["oil"]
+    },
+    cottage: {
+      name: "Keeper's Cottage", color: "#6a4a3a",
+      desc: "A narrow bed and a cold stove. The back door opens north onto the garden.",
+      exits: { east: "base", north: "garden" },
+      items: ["iron_key"]
+    },
+    garden: {
+      name: "Overgrown Garden", color: "#3f5a3a",
+      desc: "Brambles and a toppled bench. Something red sits in the weeds.",
+      exits: { south: "cottage" },
+      items: ["matches"]
+    },
+    stair: {
+      name: "Spiral Stair", color: "#4a4a55",
+      desc: "Stone steps wind upward into the dark. The lamp room is to the north.",
+      exits: { south: "base", north: "lamp" }
+    },
+    lamp: {
+      name: "Lamp Room", color: "#7a6a3a",
+      desc: "The great lens sits cold and dry. Rain lashes the glass.",
+      exits: { south: "stair" }
+    }
+  },
+  items: {
+    iron_key: { name: "Iron Key",        desc: "Heavy and cold. Stamped GATE.",            color: "#9aa0aa", shape: "torus" },
+    oil:      { name: "Can of Lamp Oil", desc: "Sloshing and nearly full.",                color: "#d0a040", shape: "cylinder" },
+    matches:  { name: "Box of Matches",  desc: "Damp on the outside, dry within.",         color: "#c0392b", shape: "box" }
+  },
+  win: {
+    room: "lamp",
+    needs: ["oil", "matches"],
+    hint: "The lamp needs fuel and a flame.",
+    text: "You fill the reservoir, strike a match, and the great lamp blazes across the sea. The ships will find the harbour tonight."
+  }
+};
+
+/* ===================================================================== */
+/*  ENGINE — no need to edit below unless you want to change behaviour   */
+/* ===================================================================== */
+const ROOM = 10, SPACING = 14, DOOR = 2.4, WALL_H = 3, WALL_T = 0.3;
+const EYE = 1.6, RADIUS = 0.35, SPEED = 3.4, REACH = 3.2;
+const DIRS = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] };
+const OPP = { north: "south", south: "north", east: "west", west: "east" };
+const warnings = [];
+const warn = m => { warnings.push(m); console.warn(m); };
+
+/* ---------- 1. lay the rooms out on a grid from their exits ---------- */
+function layout(game) {
+  const pos = { [game.start]: [0, 0] }, taken = { "0,0": game.start }, open = {};
+  const q = [game.start];
+  for (const id in game.rooms) open[id] = {};
+  while (q.length) {
+    const id = q.shift(), [gx, gz] = pos[id];
+    for (const [dir, to] of Object.entries(game.rooms[id].exits || {})) {
+      const d = DIRS[dir];
+      if (!d) { warn(`"${id}": exit "${dir}" isn't north/south/east/west, so it's left out of the 3D map.`); continue; }
+      if (!game.rooms[to]) { warn(`"${id}": exit ${dir} points to missing room "${to}".`); continue; }
+      const want = [gx + d[0], gz + d[1]];
+      if (pos[to]) {
+        if (pos[to][0] !== want[0] || pos[to][1] !== want[1]) {
+          warn(`"${id}" ${dir} → "${to}" doesn't fit a flat grid, so that passage is walled off.`); continue;
+        }
+      } else {
+        const key = want.join(",");
+        if (taken[key]) { warn(`"${to}" would sit on top of "${taken[key]}", so it's left out.`); continue; }
+        pos[to] = want; taken[key] = to; q.push(to);
+      }
+      open[id][dir] = true; open[to][OPP[dir]] = true;
+    }
+  }
+  for (const id in game.rooms) if (!pos[id]) warn(`"${id}" can't be reached from the start room, so it's left out.`);
+  return { pos, open };
+}
+
+/* ---------- 2. three.js scene ---------- */
+const canvas = document.getElementById("c");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x101418);
+scene.fog = new THREE.Fog(0x101418, 8, 34);
+const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 100);
+camera.rotation.order = "YXZ";
+scene.add(new THREE.HemisphereLight(0xfff4e0, 0x303038, 0.85));
+const sun = new THREE.DirectionalLight(0xffffff, 0.45); sun.position.set(4, 10, 6); scene.add(sun);
+
+const colliders = [], clickables = [], spinners = [];
+const mats = {};
+const mat = hex => mats[hex] || (mats[hex] = new THREE.MeshLambertMaterial({ color: hex }));
+const shade = (hex, f) => "#" + new THREE.Color(hex).multiplyScalar(f).getHexString();
+
+// axis-aligned box from (x1,z1)-(x2,z2); also registered as a collider
+function block(x1, z1, x2, z2, h, material) {
+  const w = Math.max(Math.abs(x2 - x1), WALL_T), d = Math.max(Math.abs(z2 - z1), WALL_T);
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+  m.position.set((x1 + x2) / 2, h / 2, (z1 + z2) / 2);
+  scene.add(m);
+  const c = { minX: m.position.x - w / 2, maxX: m.position.x + w / 2, minZ: m.position.z - d / 2, maxZ: m.position.z + d / 2, mesh: m };
+  colliders.push(c);
+  return c;
+}
+function floor(x1, z1, x2, z2, color) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(Math.abs(x2 - x1), Math.abs(z2 - z1)), mat(color));
+  m.rotation.x = -Math.PI / 2; m.position.set((x1 + x2) / 2, 0, (z1 + z2) / 2);
+  scene.add(m);
+}
+const signs = {}; // room id -> sprites, shown only while you're in that room
+function label(room, text, x, y, z) {
+  const cv = document.createElement("canvas"); cv.width = 512; cv.height = 96;
+  const g = cv.getContext("2d");
+  g.fillStyle = "rgba(10,12,14,.75)"; g.fillRect(0, 0, 512, 96);
+  g.fillStyle = "#EDE8DF"; g.font = "600 44px -apple-system, system-ui, sans-serif";
+  g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(text, 256, 50);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), fog: true }));
+  s.scale.set(2.2, 0.41, 1); s.position.set(x, y, z); s.visible = false;
+  (signs[room] = signs[room] || []).push(s);
+  scene.add(s);
+}
+function itemMesh(item) {
+  const geo = {
+    box: () => new THREE.BoxGeometry(0.45, 0.3, 0.3),
+    sphere: () => new THREE.SphereGeometry(0.25, 20, 14),
+    cone: () => new THREE.ConeGeometry(0.25, 0.5, 20),
+    torus: () => new THREE.TorusGeometry(0.2, 0.07, 10, 24),
+    cylinder: () => new THREE.CylinderGeometry(0.18, 0.18, 0.45, 20)
+  }[item.shape || "sphere"] || (() => new THREE.SphereGeometry(0.25, 20, 14));
+  const color = item.color || "#e0a040";
+  return new THREE.Mesh(geo(), new THREE.MeshLambertMaterial({ color, emissive: shade(color, 0.35) }));
+}
+
+const { pos, open } = layout(GAME);
+const half = ROOM / 2, gap = DOOR / 2;
+const center = id => [pos[id][0] * SPACING, pos[id][1] * SPACING];
+
+for (const id in pos) {
+  const room = GAME.rooms[id], [cx, cz] = center(id);
+  const col = room.color || "#666666", wall = mat(shade(col, 1.5));
+  floor(cx - half, cz - half, cx + half, cz + half, col);
+
+  // four walls, each with a doorway gap where there's an exit
+  for (const dir of ["north", "south", "east", "west"]) {
+    const ns = dir === "north" || dir === "south";
+    const k = (dir === "north" || dir === "west") ? -half : half;
+    const seg = (a, b) => ns ? block(cx + a, cz + k, cx + b, cz + k, WALL_H, wall)
+                              : block(cx + k, cz + a, cx + k, cz + b, WALL_H, wall);
+    if (!open[id][dir]) { seg(-half, half); continue; }
+    seg(-half, -gap); seg(gap, half);
+
+    const to = GAME.rooms[room.exits && room.exits[dir]] ? room.exits[dir] : null;
+    const dest = to || Object.keys(pos).find(o => GAME.rooms[o].exits && GAME.rooms[o].exits[OPP[dir]] === id);
+    const inset = 0.35;
+    if (dest) label(id, GAME.rooms[dest].name, ns ? cx : cx + k - Math.sign(k) * inset, 2.6, ns ? cz + k - Math.sign(k) * inset : cz);
+
+    // locked door in the doorway
+    const key = room.locked && room.locked[dir];
+    if (key) {
+      const c = ns ? block(cx - gap, cz + k, cx + gap, cz + k, WALL_H, mat("#3a2a1a"))
+                   : block(cx + k, cz - gap, cx + k, cz + gap, WALL_H, mat("#3a2a1a"));
+      c.mesh.userData = { kind: "door", room: id, key, collider: c };
+      clickables.push(c.mesh);
+    }
+
+    // corridor to the neighbour (built from the north/east side only, so once per pair)
+    if (dir === "north") {
+      floor(cx - gap, cz - SPACING + half, cx + gap, cz - half, shade(col, 0.7));
+      block(cx - gap, cz - SPACING + half, cx - gap, cz - half, WALL_H, wall);
+      block(cx + gap, cz - SPACING + half, cx + gap, cz - half, WALL_H, wall);
+    } else if (dir === "east") {
+      floor(cx + half, cz - gap, cx + SPACING - half, cz + gap, shade(col, 0.7));
+      block(cx + half, cz - gap, cx + SPACING - half, cz - gap, WALL_H, wall);
+      block(cx + half, cz + gap, cx + SPACING - half, cz + gap, WALL_H, wall);
+    }
+  }
+
+  // items, spaced around the room centre
+  const items = room.items || [];
+  items.forEach((itemId, i) => {
+    const item = GAME.items[itemId];
+    if (!item) { warn(`"${id}" lists unknown item "${itemId}".`); return; }
+    const a = (i / Math.max(items.length, 1)) * Math.PI * 2 + 0.6;
+    const m = itemMesh(item);
+    m.position.set(cx + Math.cos(a) * 2.2, 1.0, cz + Math.sin(a) * 2.2);
+    m.userData = { kind: "item", id: itemId, baseY: 1.0, phase: i };
+    scene.add(m); clickables.push(m); spinners.push(m);
+    // little plinth so items read as objects, not floating noise
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, 0.6, 16), mat(shade(col, 0.6)));
+    p.position.set(m.position.x, 0.3, m.position.z); scene.add(p);
+  });
+}
+
+/* ---------- 3. game state + text ---------- */
+const inventory = [];
+let current = null, won = false;
+const $ = id => document.getElementById(id);
+
+function log(msg) {
+  const p = document.createElement("p"); p.textContent = msg;
+  $("log").appendChild(p);
+  while ($("log").children.length > 4) $("log").firstChild.remove();
+}
+function renderInventory() {
+  const box = $("inv"); box.innerHTML = "";
+  if (!inventory.length) return;
+  const l = document.createElement("div"); l.className = "label"; l.textContent = "CARRYING"; box.appendChild(l);
+  for (const id of inventory) {
+    const it = GAME.items[id], b = document.createElement("button");
+    b.innerHTML = `<i style="background:${it.color || "#e0a040"}"></i>`;
+    b.appendChild(document.createTextNode(it.name));
+    b.onclick = () => log(`${it.name}: ${it.desc || "Nothing special."}`);
+    box.appendChild(b);
+  }
+}
+function enterRoom(id) {
+  (signs[current] || []).forEach(s => s.visible = false);
+  (signs[id] || []).forEach(s => s.visible = true);
+  current = id;
+  const r = GAME.rooms[id];
+  $("roomName").textContent = r.name;
+  $("roomDesc").textContent = r.desc;
+  $("log").innerHTML = "";
+  const here = (r.items || []).filter(i => !inventory.includes(i)).map(i => GAME.items[i] && GAME.items[i].name).filter(Boolean);
+  if (here.length) log("You see: " + here.join(", ") + ".");
+  checkWin();
+}
+function checkWin() {
+  const w = GAME.win;
+  if (won || !w) return;
+  if (w.room && current !== w.room) return;
+  const missing = (w.needs || []).filter(i => !inventory.includes(i));
+  if (missing.length) { if (w.hint) log(w.hint); return; }
+  won = true;
+  $("winText").textContent = w.text || "";
+  setTimeout(() => $("win").classList.remove("hidden"), 600);
+}
+function interact(obj) {
+  const d = obj.userData;
+  const dist = Math.hypot(obj.position.x - player.x, obj.position.z - player.z);
+  if (dist > REACH) { log("That's too far away."); return; }
+  if (d.kind === "item") {
+    const it = GAME.items[d.id];
+    scene.remove(obj); clickables.splice(clickables.indexOf(obj), 1); spinners.splice(spinners.indexOf(obj), 1);
+    inventory.push(d.id); renderInventory();
+    log(`Taken: ${it.name}. ${it.desc || ""}`);
+    checkWin();
+  } else if (d.kind === "door") {
+    if (inventory.includes(d.key)) {
+      scene.remove(obj); clickables.splice(clickables.indexOf(obj), 1);
+      d.collider.off = true;
+      log(`You unlock it with the ${GAME.items[d.key].name}.`);
+    } else {
+      log(GAME.rooms[d.room].lockedText || "It's locked.");
+    }
+  }
+}
+
+/* ---------- 4. movement + collision ---------- */
+const player = { x: 0, z: 0, yaw: 0, pitch: 0 };
+const move = { fwd: 0, side: 0 };
+const keys = {};
+function blocked(x, z) {
+  for (const c of colliders) {
+    if (c.off) continue;
+    if (x > c.minX - RADIUS && x < c.maxX + RADIUS && z > c.minZ - RADIUS && z < c.maxZ + RADIUS) return true;
+  }
+  return false;
+}
+function roomAt(x, z) {
+  for (const id in pos) {
+    const [cx, cz] = center(id);
+    if (Math.abs(x - cx) < half && Math.abs(z - cz) < half) return id;
+  }
+  return null;
+}
+
+/* ---------- 5. touch / mouse / keyboard input ---------- */
+const stick = $("stick"), knob = $("knob");
+let movePtr = null, stickX = 0, stickY = 0;
+const lookPtrs = {};
+const raycaster = new THREE.Raycaster();
+
+canvas.addEventListener("pointerdown", e => {
+  canvas.setPointerCapture(e.pointerId);
+  if (e.pointerType !== "mouse" && e.clientX < innerWidth * 0.4 && movePtr === null) {
+    movePtr = e.pointerId; stickX = e.clientX; stickY = e.clientY;
+    stick.style.left = stickX + "px"; stick.style.top = stickY + "px"; stick.style.display = "block";
+    knob.style.transform = "";
+  } else {
+    lookPtrs[e.pointerId] = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now() };
+  }
+});
+canvas.addEventListener("pointermove", e => {
+  if (e.pointerId === movePtr) {
+    let dx = e.clientX - stickX, dy = e.clientY - stickY;
+    const len = Math.hypot(dx, dy), max = 55;
+    if (len > max) { dx *= max / len; dy *= max / len; }
+    knob.style.transform = `translate(${dx}px,${dy}px)`;
+    move.side = dx / max; move.fwd = -dy / max;
+    return;
+  }
+  const p = lookPtrs[e.pointerId];
+  if (!p) return;
+  const speed = e.pointerType === "mouse" ? 0.004 : 0.006;
+  player.yaw -= (e.clientX - p.x) * speed;
+  player.pitch = Math.max(-1.2, Math.min(1.2, player.pitch - (e.clientY - p.y) * speed));
+  p.x = e.clientX; p.y = e.clientY;
+});
+function endPointer(e) {
+  if (e.pointerId === movePtr) {
+    movePtr = null; move.fwd = move.side = 0; stick.style.display = "none"; return;
+  }
+  const p = lookPtrs[e.pointerId];
+  if (!p) return;
+  delete lookPtrs[e.pointerId];
+  const wasTap = Math.hypot(e.clientX - p.sx, e.clientY - p.sy) < 12 && performance.now() - p.t < 350;
+  if (wasTap && e.type === "pointerup") tap(e.clientX, e.clientY);
+}
+canvas.addEventListener("pointerup", endPointer);
+canvas.addEventListener("pointercancel", endPointer);
+function tap(x, y) {
+  raycaster.setFromCamera({ x: (x / innerWidth) * 2 - 1, y: -(y / innerHeight) * 2 + 1 }, camera);
+  // walls are included so you can't grab things through them
+  const solid = colliders.filter(c => !c.off).map(c => c.mesh);
+  const hit = raycaster.intersectObjects(clickables.concat(solid))[0];
+  if (hit && clickables.includes(hit.object)) interact(hit.object);
+}
+addEventListener("keydown", e => { keys[e.code] = true; });
+addEventListener("keyup", e => { keys[e.code] = false; });
+document.addEventListener("gesturestart", e => e.preventDefault()); // stop iPad pinch-zoom
+
+/* ---------- 6. loop ---------- */
+function resize() {
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+}
+addEventListener("resize", resize); resize();
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.05); last = now;
+
+  let fwd = move.fwd, side = move.side;
+  if (keys.KeyW || keys.ArrowUp) fwd += 1;
+  if (keys.KeyS || keys.ArrowDown) fwd -= 1;
+  if (keys.KeyD) side += 1;
+  if (keys.KeyA) side -= 1;
+  if (keys.ArrowLeft) player.yaw += 2 * dt;
+  if (keys.ArrowRight) player.yaw -= 2 * dt;
+  const mag = Math.hypot(fwd, side);
+  if (mag > 1) { fwd /= mag; side /= mag; }
+  if (!won && mag > 0.05) {
+    const s = Math.sin(player.yaw), c = Math.cos(player.yaw);
+    const dx = (-s * fwd + c * side) * SPEED * dt, dz = (-c * fwd - s * side) * SPEED * dt;
+    if (!blocked(player.x + dx, player.z)) player.x += dx;
+    if (!blocked(player.x, player.z + dz)) player.z += dz;
+  }
+  const r = roomAt(player.x, player.z);
+  if (r && r !== current) enterRoom(r);
+
+  for (const m of spinners) {
+    m.rotation.y += dt * 1.2;
+    m.position.y = m.userData.baseY + Math.sin(now / 500 + m.userData.phase) * 0.08;
+  }
+  camera.position.set(player.x, EYE, player.z);
+  camera.rotation.set(player.pitch, player.yaw, 0);
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+/* ---------- 7. start ---------- */
+$("title").textContent = GAME.title;
+$("intro").textContent = GAME.intro || "";
+if (warnings.length) $("warnings").innerHTML = "<b>Map warnings:</b><br>" + warnings.map(w => "• " + w.replace(/</g, "&lt;")).join("<br>");
+$("go").onclick = () => { $("start").classList.add("hidden"); enterRoom(GAME.start); };
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
